@@ -5,7 +5,7 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: macos-26
     timeout-minutes: 340
     steps:
       - uses: actions/checkout@v4
@@ -28,11 +28,6 @@ jobs:
         with:
           ndk-version: r29
 
-      - name: Install system packages
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y -qq build-essential cmake libpng-dev libturbojpeg-dev libvorbis-dev libopenal-dev libsdl2-dev
-
       - name: Install Haxe libraries
         run: |
           haxelib setup ~/haxelib
@@ -47,13 +42,10 @@ jobs:
           git submodule update --init --recursive --force
           haxelib dev lime $HOME/lime
 
-      - name: Check libjxl header
+      - name: Check SDL files
         continue-on-error: true
         run: |
-          cd $HOME/lime/project/lib/sdl_image/external/libjxl
-          find . -name jxl_export.h
-          cmake -S . -B build -DBUILD_TESTING=OFF -DJPEGXL_ENABLE_TOOLS=OFF -DJPEGXL_ENABLE_BENCHMARK=OFF -DJPEGXL_ENABLE_EXAMPLES=OFF -DJPEGXL_ENABLE_MANPAGES=OFF -DJPEGXL_ENABLE_DOXYGEN=OFF -DJPEGXL_ENABLE_JNI=OFF -DJPEGXL_ENABLE_SJPEG=OFF -DJPEGXL_ENABLE_OPENEXR=OFF -DJPEGXL_ENABLE_PLUGINS=OFF -DJPEGXL_ENABLE_VIEWERS=OFF
-          find . -name jxl_export.h
+          ls $HOME/lime/project/lib/sdl/src/joystick/hidapi | grep -i xbox360
 
       - name: Configure Lime
         run: |
