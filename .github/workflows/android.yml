@@ -31,6 +31,12 @@ jobs:
         with:
           ndk-version: r29
 
+      - name: Export Android env vars
+        run: |
+          echo "ANDROID_NDK_HOME=${{ steps.setup-ndk.outputs.ndk-path }}" >> $GITHUB_ENV
+          echo "ANDROID_NDK_ROOT=${{ steps.setup-ndk.outputs.ndk-path }}" >> $GITHUB_ENV
+          echo "ANDROID_SDK_ROOT=$ANDROID_HOME" >> $GITHUB_ENV
+
       - name: Install Android SDK packages
         shell: bash {0}
         run: |
@@ -205,22 +211,39 @@ jobs:
           bash $HOME/rebuild_lime.sh android -arm64
 
       - name: Get prebuilt Lime tools for macOS
-        timeout-minutes: 15
+        timeout-minutes: 30
         run: |
+          rm -rf /tmp/limezip
           mkdir -p /tmp/limezip
           cd /tmp/limezip
           curl -fL --retry 3 https://lib.haxe.org/p/lime/8.3.2/download/ -o lime.zip
           unzip -q lime.zip
-          NDLL=$(find /tmp/limezip -type d -name ndll | head -1)
-          echo "ndll descargado en: $NDLL"
-          ls "$NDLL"
-          mkdir -p $LIME_DIR/ndll
-          for d in "$NDLL"/Mac*; do
+          echo "Contenido del zip (2 niveles):"
+          find /tmp/limezip -maxdepth 2 | head -50
+          echo "Carpetas Mac encontradas:"
+          find /tmp/limezip -type d -name 'Mac*' -path '*/ndll/Mac*' -not -path '*/templates/*' -prune -print
+          mkdir -p "$LIME_DIR/ndll"
+          COUNT=0
+          for d in $(find /tmp/limezip -type d -name 'Mac*' -path '*/ndll/Mac*' -not -path '*/templates/*' -prune -print); do
             echo "Copiando $d"
-            cp -R "$d" $LIME_DIR/ndll/
+            cp -R "$d" "$LIME_DIR/ndll/"
+            COUNT=$((COUNT+1))
           done
+          if [ "$COUNT" = "0" ]; then
+            echo "El zip no trae binarios de Mac, compilando desde el codigo fuente"
+            haxelib run lime rebuild mac -release
+          fi
           echo "Archivos nativos disponibles:"
           find $LIME_DIR/ndll -type f
+
+      - name: Verify Lime tools
+        run: |
+          ls -la $LIME_DIR/ndll
+          if ! ls -d $LIME_DIR/ndll/Mac* > /dev/null 2>&1; then
+            echo "ERROR: faltan los binarios de Mac en $LIME_DIR/ndll"
+            exit 1
+          fi
+          haxelib run lime version
 
       - name: Build APK
         timeout-minutes: 200
