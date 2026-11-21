@@ -31,7 +31,7 @@ jobs:
       - name: Install system packages
         run: |
           sudo apt-get update
-          sudo apt-get install -y -qq build-essential cmake libegl1-mesa-dev libgl1-mesa-dev libglu1-mesa-dev libibus-1.0-dev libdbus-1-dev libdecor-0-dev libudev-dev libgbm-dev libdrm-dev libwayland-dev libpng-dev libturbojpeg-dev libvorbis-dev libopenal-dev libsdl2-dev libmbedtls-dev libuv1-dev libx11-dev libxext-dev libxfixes-dev libxi-dev libxinerama-dev libxkbcommon-dev libxcursor-dev libxrandr-dev libxss-dev libpulse-dev libasound2-dev libpipewire-0.3-dev
+          sudo apt-get install -y -qq build-essential cmake libpng-dev libturbojpeg-dev libvorbis-dev libopenal-dev libsdl2-dev
 
       - name: Install Haxe libraries
         run: |
@@ -47,6 +47,14 @@ jobs:
           git submodule update --init --recursive --force
           haxelib dev lime $HOME/lime
 
+      - name: Check libjxl header
+        continue-on-error: true
+        run: |
+          cd $HOME/lime/project/lib/sdl_image/external/libjxl
+          find . -name jxl_export.h
+          cmake -S . -B build -DBUILD_TESTING=OFF -DJPEGXL_ENABLE_TOOLS=OFF -DJPEGXL_ENABLE_BENCHMARK=OFF -DJPEGXL_ENABLE_EXAMPLES=OFF -DJPEGXL_ENABLE_MANPAGES=OFF -DJPEGXL_ENABLE_DOXYGEN=OFF -DJPEGXL_ENABLE_JNI=OFF -DJPEGXL_ENABLE_SJPEG=OFF -DJPEGXL_ENABLE_OPENEXR=OFF -DJPEGXL_ENABLE_PLUGINS=OFF -DJPEGXL_ENABLE_VIEWERS=OFF
+          find . -name jxl_export.h
+
       - name: Configure Lime
         run: |
           haxelib run lime config ANDROID_SDK $ANDROID_HOME -nocffi
@@ -54,18 +62,17 @@ jobs:
           haxelib run lime config JAVA_HOME $JAVA_HOME -nocffi
           haxelib run lime config ANDROID_SETUP true -nocffi
 
-      - name: Rebuild Lime native libraries
+      - name: Rebuild Lime for Android
         timeout-minutes: 90
         run: |
           rm -rf $HOME/lime/ndll
           mkdir $HOME/lime/ndll
           haxelib run lime rebuild hxcpp
-          haxelib run lime rebuild linux -64 -release
           haxelib run lime rebuild android -arm64 -release
 
       - name: Build APK
         timeout-minutes: 240
-        run: haxelib run lime build android -final
+        run: haxelib run lime build android -final -nocffi
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
