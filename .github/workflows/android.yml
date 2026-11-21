@@ -42,10 +42,13 @@ jobs:
           git submodule update --init --recursive --force
           haxelib dev lime $HOME/lime
 
-      - name: Check SDL files
-        continue-on-error: true
+      - name: Patch missing SDL file entry
         run: |
-          ls $HOME/lime/project/lib/sdl/src/joystick/hidapi | grep -i xbox360
+          echo "Entradas encontradas:"
+          grep -rn --include="*.xml" "xbox360bb" $HOME/lime/project || echo "ninguna"
+          grep -rl --include="*.xml" "xbox360bb" $HOME/lime/project | xargs -I{} sed -i '' '/xbox360bb/d' {} || true
+          echo "Despues del parche:"
+          grep -rn --include="*.xml" "xbox360bb" $HOME/lime/project || echo "ninguna"
 
       - name: Configure Lime
         run: |
@@ -55,7 +58,7 @@ jobs:
           haxelib run lime config ANDROID_SETUP true -nocffi
 
       - name: Rebuild Lime for Android
-        timeout-minutes: 90
+        timeout-minutes: 45
         run: |
           rm -rf $HOME/lime/ndll
           mkdir $HOME/lime/ndll
