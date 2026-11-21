@@ -204,12 +204,21 @@ jobs:
           haxelib run lime rebuild hxcpp
           bash $HOME/rebuild_lime.sh android -arm64
 
-      - name: Rebuild Lime tools for macOS
-        timeout-minutes: 60
+      - name: Get prebuilt Lime tools for macOS
+        timeout-minutes: 15
         run: |
-          bash $HOME/rebuild_lime.sh mac -arm64
-          echo "Archivos nativos generados:"
-          find $LIME_DIR/ndll -type f | head -30
+          mkdir -p /tmp/hl
+          HAXELIB_PATH=/tmp/hl haxelib install lime --quiet
+          REL=$(ls -d /tmp/hl/lime/*/ | head -1)
+          echo "Version descargada: $REL"
+          ls $REL/ndll
+          mkdir -p $LIME_DIR/ndll
+          for d in $REL/ndll/Mac*; do
+            echo "Copiando $d"
+            cp -R "$d" $LIME_DIR/ndll/
+          done
+          echo "Archivos nativos disponibles:"
+          find $LIME_DIR/ndll -type f
 
       - name: Build APK
         timeout-minutes: 200
