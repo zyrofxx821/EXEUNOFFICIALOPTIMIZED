@@ -67,21 +67,50 @@ jobs:
           git submodule update --init --recursive --force
           haxelib dev lime $HOME/lime
 
+      - name: Create known stub for missing SDL file
+        run: |
+          F=$HOME/lime/project/lib/sdl/src/joystick/hidapi/SDL_hidapi_xbox360bb.c
+          echo "typedef int lime_stub_unused;" > $F
+          ls -la $F
+
       - name: Create rebuild helper script
         run: |
           mkdir -p $HOME/logs
           cat > $HOME/rebuild_lime.sh << 'EOF'
           #!/bin/bash
-          mkdir -p $HOME/logs
-          for i in 1 2 3 4 5 6 7 8 9 10 11 12; do
+          LOGDIR="$HOME/logs"
+          mkdir -p "$LOGDIR"
+          for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
+            LOG="$LOGDIR/rebuild-$i.log"
+            : > "$LOG"
             echo "=== Intento $i: lime rebuild $@ ==="
-            haxelib run lime rebuild "$@" -release 2>&1 | tee $HOME/logs/rebuild-$i.log
-            STATUS=${PIPESTATUS[0]}
-            if [ "$STATUS" = "0" ]; then
+            haxelib run lime rebuild "$@" -release > "$LOG" 2>&1 &
+            PID=$!
+            tail -n +1 -f "$LOG" &
+            TAILPID=$!
+            KILLED=0
+            while kill -0 $PID 2>/dev/null; do
+              if grep -q "no such file or directory" "$LOG"; then
+                sleep 5
+                echo ">>> Archivo faltante detectado: deteniendo para repararlo"
+                pkill -f hxcpp 2>/dev/null
+                pkill -f "lime rebuild" 2>/dev/null
+                pkill clang++ 2>/dev/null
+                kill $PID 2>/dev/null
+                KILLED=1
+                break
+              fi
+              sleep 3
+            done
+            sleep 1
+            kill $TAILPID 2>/dev/null
+            wait $PID 2>/dev/null
+            STATUS=$?
+            if [ "$KILLED" = "0" ] && [ "$STATUS" = "0" ]; then
               echo "Rebuild terminado bien"
               exit 0
             fi
-            MISSING=$(sed -n "s/.*no such file or directory: '\([^']*\)'.*/\1/p" $HOME/logs/rebuild-$i.log | sed 's#^\./##' | grep -E '^lib/.*\.(c|cc|cpp|m|mm)$' | sort -u)
+            MISSING=$(grep -A1 "no such file or directory" "$LOG" | grep -oE "(\./)?lib/[A-Za-z0-9_./+-]+\.(c|cc|cpp|mm|m)" | sed 's#^\./##' | sort -u)
             if [ -z "$MISSING" ]; then
               echo "El error NO es un archivo faltante. Se detiene."
               exit 1
