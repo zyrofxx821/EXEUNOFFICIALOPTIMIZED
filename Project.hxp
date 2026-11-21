@@ -108,7 +108,7 @@ class Project extends HXProject
         LUA_ALLOWED.apply(this, true);
         DISCORD_ALLOWED.apply(this, isDesktop());
         FEATURE_COMPRESSED_TEXTURES.apply(this, isMobile());
-        IRIS_DEBUG.apply(this, true);
+        IRIS_DEBUG.apply(this, false);
         VIDEOS_ALLOWED.apply(this, true);
         CRASH_HANDLER.apply(this, true);
     }
@@ -171,13 +171,16 @@ class Project extends HXProject
             setHaxedef("HXC_DEBUG_TRACE");
 
         if (CRASH_HANDLER.isEnabled(this))
-        {
-            setHaxedef("HXCPP_CHECK_POINTER");
-            setHaxedef("HXCPP_STACK_LINE");
-            setHaxedef("HXCPP_STACK_TRACE");
-            setHaxedef("HXCPP_CATCH_SEGV");
-        }
+{
+    setHaxedef("HXCPP_CATCH_SEGV");
+}
 
+if (CRASH_HANDLER.isEnabled(this) && debug)
+{
+    setHaxedef("HXCPP_CHECK_POINTER");
+    setHaxedef("HXCPP_STACK_LINE");
+    setHaxedef("HXCPP_STACK_TRACE");
+}
         if(isCPP())
         {
             setHaxedef("HXCPP_GC_BIG_BLOCKS");
