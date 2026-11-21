@@ -207,13 +207,15 @@ jobs:
       - name: Get prebuilt Lime tools for macOS
         timeout-minutes: 15
         run: |
-          mkdir -p /tmp/hl
-          HAXELIB_PATH=/tmp/hl haxelib install lime --quiet
-          REL=$(ls -d /tmp/hl/lime/*/ | head -1)
-          echo "Version descargada: $REL"
-          ls $REL/ndll
+          mkdir -p /tmp/limezip
+          cd /tmp/limezip
+          curl -fL --retry 3 https://lib.haxe.org/p/lime/8.3.2/download/ -o lime.zip
+          unzip -q lime.zip
+          NDLL=$(find /tmp/limezip -type d -name ndll | head -1)
+          echo "ndll descargado en: $NDLL"
+          ls "$NDLL"
           mkdir -p $LIME_DIR/ndll
-          for d in $REL/ndll/Mac*; do
+          for d in "$NDLL"/Mac*; do
             echo "Copiando $d"
             cp -R "$d" $LIME_DIR/ndll/
           done
