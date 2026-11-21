@@ -94,6 +94,46 @@ jobs:
           echo "typedef int lime_stub_unused;" > $F
           ls -la $F
 
+      - name: Create libjxl export headers
+        run: |
+          JXL=$LIME_DIR/project/lib/sdl_image/external/libjxl
+          D=$JXL/build/lib/include/jxl
+          mkdir -p $D
+          SRC=$LIME_DIR/project/lib/custom/sdl_image/external/libjxl/build-android-arm64/lib/include/jxl
+          if [ -d "$SRC" ]; then
+            echo "Copiando cabeceras generadas desde: $SRC"
+            ls $SRC
+            cp -n $SRC/* $D/
+          else
+            echo "No existe $SRC"
+          fi
+          for pair in "jxl_export.h:JXL" "jxl_threads_export.h:JXL_THREADS" "jxl_cms_export.h:JXL_CMS"; do
+            NAME=${pair%%:*}
+            PFX=${pair##*:}
+            if [ ! -f "$D/$NAME" ]; then
+              echo "Creando cabecera de reemplazo: $NAME"
+              {
+                echo "#pragma once"
+                echo "#define ${PFX}_EXPORT"
+                echo "#define ${PFX}_NO_EXPORT"
+                echo "#define ${PFX}_DEPRECATED __attribute__((deprecated))"
+                echo "#define ${PFX}_DEPRECATED_EXPORT ${PFX}_DEPRECATED"
+                echo "#define ${PFX}_DEPRECATED_NO_EXPORT ${PFX}_DEPRECATED"
+              } > "$D/$NAME"
+            fi
+          done
+          if [ ! -f "$D/version.h" ] && [ ! -f "$JXL/lib/include/jxl/version.h" ]; then
+            echo "Creando version.h de reemplazo"
+            {
+              echo "#pragma once"
+              echo "#define JPEGXL_MAJOR_VERSION 0"
+              echo "#define JPEGXL_MINOR_VERSION 10"
+              echo "#define JPEGXL_PATCH_VERSION 3"
+            } > "$D/version.h"
+          fi
+          echo "Cabeceras listas en $D:"
+          ls -la $D
+
       - name: Create rebuild helper script
         run: |
           mkdir -p $HOME/logs
@@ -103,7 +143,7 @@ jobs:
           mkdir -p "$LOGDIR"
           echo "Lime dir: $LIME_DIR"
           for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
-            LOG="$LOGDIR/rebuild-$i.log"
+            LOG="$LOGDIR/rebuild-$1-$i.log"
             : > "$LOG"
             echo "=== Intento $i: lime rebuild $@ ==="
             haxelib run lime rebuild "$@" -release > "$LOG" 2>&1 &
@@ -164,20 +204,20 @@ jobs:
           haxelib run lime rebuild hxcpp
           bash $HOME/rebuild_lime.sh android -arm64
 
+      - name: Rebuild Lime tools for macOS
+        timeout-minutes: 60
+        run: |
+          bash $HOME/rebuild_lime.sh mac -arm64
+          echo "Archivos nativos generados:"
+          find $LIME_DIR/ndll -type f | head -30
+
       - name: Build APK
         timeout-minutes: 200
         shell: bash {0}
         run: |
           mkdir -p $HOME/logs
-          haxelib run lime build android -final -nocffi 2>&1 | tee $HOME/logs/build.log
-          STATUS=${PIPESTATUS[0]}
-          if [ "$STATUS" != "0" ] && grep -qiE "primitive not found|ndll|cffi" $HOME/logs/build.log; then
-            echo "=== Reintento: reconstruyendo herramientas nativas de macOS ==="
-            bash $HOME/rebuild_lime.sh mac -arm64 || exit 1
-            haxelib run lime build android -final 2>&1 | tee $HOME/logs/build-retry.log
-            STATUS=${PIPESTATUS[0]}
-          fi
-          exit $STATUS
+          haxelib run lime build android -final 2>&1 | tee $HOME/logs/build.log
+          exit ${PIPESTATUS[0]}
 
       - name: List output
         if: always()
