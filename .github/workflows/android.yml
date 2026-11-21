@@ -149,7 +149,7 @@ jobs:
           mkdir -p "$LOGDIR"
           echo "Lime dir: $LIME_DIR"
           for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
-            LOG="$LOGDIR/rebuild-$1-$i.log"
+            LOG="$LOGDIR/rebuild-$1-$2-$i.log"
             : > "$LOG"
             echo "=== Intento $i: lime rebuild $@ ==="
             haxelib run lime rebuild "$@" -release > "$LOG" 2>&1 &
@@ -210,40 +210,37 @@ jobs:
           haxelib run lime rebuild hxcpp
           bash $HOME/rebuild_lime.sh android -arm64
 
-      - name: Get prebuilt Lime tools for macOS
-        timeout-minutes: 30
+      - name: Rebuild Lime tools for macOS
+        timeout-minutes: 90
         run: |
-          rm -rf /tmp/limezip
-          mkdir -p /tmp/limezip
-          cd /tmp/limezip
-          curl -fL --retry 3 https://lib.haxe.org/p/lime/8.3.2/download/ -o lime.zip
-          unzip -q lime.zip
-          echo "Contenido del zip (2 niveles):"
-          find /tmp/limezip -maxdepth 2 | head -50
-          echo "Carpetas Mac encontradas:"
-          find /tmp/limezip -type d -name 'Mac*' -path '*/ndll/Mac*' -not -path '*/templates/*' -prune -print
-          mkdir -p "$LIME_DIR/ndll"
-          COUNT=0
-          for d in $(find /tmp/limezip -type d -name 'Mac*' -path '*/ndll/Mac*' -not -path '*/templates/*' -prune -print); do
-            echo "Copiando $d"
-            cp -R "$d" "$LIME_DIR/ndll/"
-            COUNT=$((COUNT+1))
-          done
-          if [ "$COUNT" = "0" ]; then
-            echo "El zip no trae binarios de Mac, compilando desde el codigo fuente"
-            haxelib run lime rebuild mac -release
-          fi
-          echo "Archivos nativos disponibles:"
+          mkdir -p $LIME_DIR/ndll
+          bash $HOME/rebuild_lime.sh mac -arm64 || echo "AVISO: fallo rebuild mac arm64"
+          bash $HOME/rebuild_lime.sh mac -64 || echo "AVISO: fallo rebuild mac 64 (x86_64), se sigue"
+          echo "Binarios nativos tras compilar:"
           find $LIME_DIR/ndll -type f
+
+          if [ ! -f "$LIME_DIR/ndll/MacArm64/lime.ndll" ] && [ ! -f "$LIME_DIR/ndll/Mac64/lime.ndll" ]; then
+            echo "No se compilo lime.ndll, usando binarios prebuilt 8.3.2 (pueden no coincidir con el fork)"
+            rm -rf /tmp/limezip
+            mkdir -p /tmp/limezip
+            cd /tmp/limezip
+            curl -fL --retry 3 https://lib.haxe.org/p/lime/8.3.2/download/ -o lime.zip
+            unzip -q lime.zip
+            for d in $(find /tmp/limezip -type d -name 'Mac*' -path '*/ndll/Mac*' -not -path '*/templates/*' -prune -print); do
+              echo "Copiando $d"
+              cp -R "$d" "$LIME_DIR/ndll/"
+            done
+          fi
 
       - name: Verify Lime tools
         run: |
           ls -la $LIME_DIR/ndll
+          find $LIME_DIR/ndll -type f
           if ! ls -d $LIME_DIR/ndll/Mac* > /dev/null 2>&1; then
             echo "ERROR: faltan los binarios de Mac en $LIME_DIR/ndll"
             exit 1
           fi
-          haxelib run lime version
+          haxelib run lime version || echo "AVISO: lime version dio error, el paso Build APK mostrara mas detalle"
 
       - name: Build APK
         timeout-minutes: 200
