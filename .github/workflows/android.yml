@@ -33,7 +33,13 @@ jobs:
       - name: Install system libraries
         run: |
           sudo apt-get update
-          sudo apt-get install -y libavif16
+          sudo apt-get install -y libavif16 libjxl0.7 libwebp7 libpng16-16 libjpeg-turbo8
+
+      - name: Check missing libraries
+        run: |
+          NDLL=$(find .haxelib -path "*Linux64/lime.ndll" | head -1)
+          echo "Archivo: $NDLL"
+          ldd "$NDLL" | grep "not found" || echo "No falta ninguna libreria"
 
       - name: Configure Lime for Android
         env:
