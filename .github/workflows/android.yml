@@ -3,6 +3,9 @@ name: Build Android
 on:
   workflow_dispatch:
 
+env:
+  HAXELIB_PATH: ${{ github.workspace }}/.haxelib
+
 jobs:
   build:
     runs-on: macos-26
@@ -43,26 +46,24 @@ jobs:
         id: haxelib-cache
         uses: actions/cache/restore@v4
         with:
-          path: |
-            ~/haxelib
-            .haxelib
-          key: haxelib2-${{ runner.os }}-${{ hashFiles('hmm.json') }}
+          path: .haxelib
+          key: haxelib3-${{ runner.os }}-${{ hashFiles('hmm.json') }}
 
       - name: Install Haxe libraries
         run: |
-          haxelib setup ~/haxelib
+          mkdir -p "$HAXELIB_PATH"
+          echo "Repositorio haxelib: $HAXELIB_PATH"
           haxelib install hmm --quiet
           haxelib run hmm install --quiet
           haxelib install format --quiet
+          haxelib list
 
       - name: Save haxelib cache
         if: steps.haxelib-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
         with:
-          path: |
-            ~/haxelib
-            .haxelib
-          key: haxelib2-${{ runner.os }}-${{ hashFiles('hmm.json') }}
+          path: .haxelib
+          key: haxelib3-${{ runner.os }}-${{ hashFiles('hmm.json') }}
 
       - name: Get Lime source and detect which Lime is used
         run: |
@@ -73,8 +74,19 @@ jobs:
           LIME_DIR=${LIME_DIR%/}
           echo "LIME_DIR=$LIME_DIR" >> $GITHUB_ENV
           echo "Lime usado: $LIME_DIR"
-          haxelib list | grep -i lime
           test -d "$LIME_DIR/project" || { echo "ERROR: no encuentro project en $LIME_DIR"; exit 1; }
+
+      - name: Check hxcpp is visible from Lime folder
+        run: |
+          cd "$LIME_DIR"
+          if haxelib path hxcpp > /dev/null 2>&1; then
+            echo "hxcpp visible:"
+            haxelib path hxcpp | head -2
+          else
+            echo "hxcpp NO visible, instalando desde el repo del mod"
+            haxelib git hxcpp https://github.com/Wolfie1985yt/hxcpp.git
+            haxelib path hxcpp | head -2
+          fi
 
       - name: Create known stub for missing SDL file
         run: |
