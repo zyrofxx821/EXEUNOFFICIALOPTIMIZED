@@ -34,12 +34,10 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y libavif16 libjxl0.7 libwebp7 libpng16-16 libjpeg-turbo8
+          sudo apt-get install -y build-essential libgl1-mesa-dev libglu1-mesa-dev libasound2-dev libpulse-dev libx11-dev libxext-dev libxrandr-dev libxi-dev libxinerama-dev libxcursor-dev libxss-dev libdrm-dev libgbm-dev libwayland-dev libxkbcommon-dev libdbus-1-dev libudev-dev
 
-      - name: Check missing libraries
-        run: |
-          NDLL=$(find .haxelib -path "*Linux64/lime.ndll" | head -1)
-          echo "Archivo: $NDLL"
-          ldd "$NDLL" | grep "not found" || echo "No falta ninguna libreria"
+      - name: Rebuild Lime native library
+        run: haxelib run lime rebuild linux -release
 
       - name: Configure Lime for Android
         env:
