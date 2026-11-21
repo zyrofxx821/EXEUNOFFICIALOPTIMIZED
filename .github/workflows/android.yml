@@ -43,8 +43,10 @@ jobs:
         id: haxelib-cache
         uses: actions/cache/restore@v4
         with:
-          path: ~/haxelib
-          key: haxelib-${{ runner.os }}-${{ hashFiles('hmm.json') }}
+          path: |
+            ~/haxelib
+            .haxelib
+          key: haxelib2-${{ runner.os }}-${{ hashFiles('hmm.json') }}
 
       - name: Install Haxe libraries
         run: |
@@ -57,19 +59,26 @@ jobs:
         if: steps.haxelib-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
         with:
-          path: ~/haxelib
-          key: haxelib-${{ runner.os }}-${{ hashFiles('hmm.json') }}
+          path: |
+            ~/haxelib
+            .haxelib
+          key: haxelib2-${{ runner.os }}-${{ hashFiles('hmm.json') }}
 
-      - name: Get Lime source with submodules
+      - name: Get Lime source and detect which Lime is used
         run: |
           git clone --recursive https://github.com/GreenColdTea/lime-fc.git $HOME/lime
-          cd $HOME/lime/project/lib/sdl_image
-          git submodule update --init --recursive --force
+          (cd $HOME/lime/project/lib/sdl_image && git submodule update --init --recursive --force)
           haxelib dev lime $HOME/lime
+          LIME_DIR=$(haxelib libpath lime | head -1)
+          LIME_DIR=${LIME_DIR%/}
+          echo "LIME_DIR=$LIME_DIR" >> $GITHUB_ENV
+          echo "Lime usado: $LIME_DIR"
+          haxelib list | grep -i lime
+          test -d "$LIME_DIR/project" || { echo "ERROR: no encuentro project en $LIME_DIR"; exit 1; }
 
       - name: Create known stub for missing SDL file
         run: |
-          F=$HOME/lime/project/lib/sdl/src/joystick/hidapi/SDL_hidapi_xbox360bb.c
+          F=$LIME_DIR/project/lib/sdl/src/joystick/hidapi/SDL_hidapi_xbox360bb.c
           echo "typedef int lime_stub_unused;" > $F
           ls -la $F
 
@@ -80,6 +89,7 @@ jobs:
           #!/bin/bash
           LOGDIR="$HOME/logs"
           mkdir -p "$LOGDIR"
+          echo "Lime dir: $LIME_DIR"
           for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
             LOG="$LOGDIR/rebuild-$i.log"
             : > "$LOG"
@@ -116,9 +126,10 @@ jobs:
               exit 1
             fi
             for f in $MISSING; do
-              echo "Creando stub vacio: $f"
-              mkdir -p "$HOME/lime/project/$(dirname "$f")"
-              echo "typedef int lime_stub_unused;" > "$HOME/lime/project/$f"
+              echo "Creando stub vacio en: $LIME_DIR/project/$f"
+              mkdir -p "$LIME_DIR/project/$(dirname "$f")"
+              echo "typedef int lime_stub_unused;" > "$LIME_DIR/project/$f"
+              ls -la "$LIME_DIR/project/$f"
             done
           done
           echo "Demasiados intentos"
@@ -136,8 +147,8 @@ jobs:
       - name: Rebuild Lime for Android
         timeout-minutes: 60
         run: |
-          rm -rf $HOME/lime/ndll
-          mkdir $HOME/lime/ndll
+          rm -rf $LIME_DIR/ndll
+          mkdir $LIME_DIR/ndll
           haxelib run lime rebuild hxcpp
           bash $HOME/rebuild_lime.sh android -arm64
 
