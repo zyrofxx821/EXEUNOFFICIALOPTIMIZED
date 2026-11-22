@@ -217,19 +217,50 @@ jobs:
           haxelib run lime rebuild hxcpp
           bash $HOME/rebuild_lime.sh android -arm64
 
+      - name: Install libjxl for macOS link
+        timeout-minutes: 30
+        run: |
+          echo "uname -m: $(uname -m)"
+          echo "neko: $(which neko)"
+          NEKO_INFO=$(file -L "$(which neko)" || true)
+          echo "$NEKO_INFO"
+
+          if echo "$NEKO_INFO" | grep -q "arm64"; then
+            MACARCH="-arm64"
+            BREW_PREFIX=/opt/homebrew
+            brew install jpeg-xl
+          else
+            MACARCH="-64"
+            BREW_PREFIX=/usr/local
+            softwareupdate --install-rosetta --agree-to-license || true
+            if [ ! -x /usr/local/bin/brew ]; then
+              arch -x86_64 /bin/bash -c "NONINTERACTIVE=1 $(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+            fi
+            arch -x86_64 /usr/local/bin/brew install jpeg-xl
+          fi
+
+          echo "MACARCH=$MACARCH" >> $GITHUB_ENV
+          echo "BREW_PREFIX=$BREW_PREFIX" >> $GITHUB_ENV
+
+          echo "Librerias jxl instaladas:"
+          ls -la $BREW_PREFIX/lib | grep -E "jxl|brotli|hwy|lcms" || true
+
+          sudo mkdir -p /opt/local/lib /opt/local/include
+          for f in $BREW_PREFIX/lib/libjxl* $BREW_PREFIX/lib/libbrotli* $BREW_PREFIX/lib/libhwy* $BREW_PREFIX/lib/liblcms2*; do
+            [ -e "$f" ] && sudo ln -sf "$f" /opt/local/lib/
+          done
+          [ -d "$BREW_PREFIX/include/jxl" ] && sudo ln -sfn "$BREW_PREFIX/include/jxl" /opt/local/include/jxl
+          ls -la /opt/local/lib
+
       - name: Rebuild Lime tools for macOS
         timeout-minutes: 90
         run: |
           mkdir -p $LIME_DIR/ndll
-          echo "uname -m: $(uname -m)"
-          echo "neko: $(which neko)"
-          file "$(which neko)" || true
-          neko -version || true
+          export LIBRARY_PATH="$BREW_PREFIX/lib:/opt/local/lib:$LIBRARY_PATH"
+          export CPATH="$BREW_PREFIX/include:/opt/local/include:$CPATH"
+          echo "Arquitectura a compilar: $MACARCH"
 
-          for ARCH in -arm64 -64; do
-            echo "=============== rebuild mac $ARCH ==============="
-            bash $HOME/rebuild_lime.sh mac $ARCH || echo "AVISO: fallo rebuild mac $ARCH"
-          done
+          bash $HOME/rebuild_lime.sh mac $MACARCH || echo "AVISO: fallo rebuild mac $MACARCH"
 
           echo "Binarios nativos tras compilar:"
           find $LIME_DIR/ndll -type f
