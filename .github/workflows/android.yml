@@ -140,6 +140,13 @@ jobs:
           echo "Cabeceras listas en $D:"
           ls -la $D
 
+      - name: Patch zlib for new macOS SDK
+        run: |
+          for f in $(find "$LIME_DIR/project" -name zutil.h); do
+            echo "Parcheando $f"
+            sed -i '' '/define fdopen(fd,mode) NULL/d' "$f"
+          done
+
       - name: Create rebuild helper script
         run: |
           mkdir -p $HOME/logs
@@ -214,33 +221,34 @@ jobs:
         timeout-minutes: 90
         run: |
           mkdir -p $LIME_DIR/ndll
-          bash $HOME/rebuild_lime.sh mac -arm64 || echo "AVISO: fallo rebuild mac arm64"
-          bash $HOME/rebuild_lime.sh mac -64 || echo "AVISO: fallo rebuild mac 64 (x86_64), se sigue"
+          echo "uname -m: $(uname -m)"
+          echo "neko: $(which neko)"
+          file "$(which neko)" || true
+          neko -version || true
+
+          for ARCH in -arm64 -64; do
+            echo "=============== rebuild mac $ARCH ==============="
+            bash $HOME/rebuild_lime.sh mac $ARCH || echo "AVISO: fallo rebuild mac $ARCH"
+          done
+
           echo "Binarios nativos tras compilar:"
           find $LIME_DIR/ndll -type f
 
           if [ ! -f "$LIME_DIR/ndll/MacArm64/lime.ndll" ] && [ ! -f "$LIME_DIR/ndll/Mac64/lime.ndll" ]; then
-            echo "No se compilo lime.ndll, usando binarios prebuilt 8.3.2 (pueden no coincidir con el fork)"
-            rm -rf /tmp/limezip
-            mkdir -p /tmp/limezip
-            cd /tmp/limezip
-            curl -fL --retry 3 https://lib.haxe.org/p/lime/8.3.2/download/ -o lime.zip
-            unzip -q lime.zip
-            for d in $(find /tmp/limezip -type d -name 'Mac*' -path '*/ndll/Mac*' -not -path '*/templates/*' -prune -print); do
-              echo "Copiando $d"
-              cp -R "$d" "$LIME_DIR/ndll/"
-            done
+            echo "=============================================="
+            echo "ERROR: no se compilo lime.ndll para macOS"
+            echo "Lineas de error de la compilacion:"
+            echo "=============================================="
+            grep -h -E "error:|fatal error|Undefined symbols|ld: |Error:" $HOME/logs/rebuild-mac-*.log | sort -u | head -80
+            exit 1
           fi
 
       - name: Verify Lime tools
         run: |
           ls -la $LIME_DIR/ndll
           find $LIME_DIR/ndll -type f
-          if ! ls -d $LIME_DIR/ndll/Mac* > /dev/null 2>&1; then
-            echo "ERROR: faltan los binarios de Mac en $LIME_DIR/ndll"
-            exit 1
-          fi
-          haxelib run lime version || echo "AVISO: lime version dio error, el paso Build APK mostrara mas detalle"
+          file $LIME_DIR/ndll/Mac*/lime.ndll || true
+          haxelib run lime version
 
       - name: Build APK
         timeout-minutes: 200
