@@ -24,8 +24,11 @@ jobs:
         run: |
           echo "Archivos en la raiz del repo:"
           ls -la
-          if [ ! -f project.xml ] && [ ! -f Project.xml ]; then
-            echo "ERROR: no encuentro project.xml ni Project.xml en la raiz del repo"
+          if [ -f Project.hxp ] || [ -f project.hxp ] || [ -f project.xml ] || [ -f Project.xml ]; then
+            echo "Archivo de proyecto encontrado:"
+            ls Project.hxp project.hxp project.xml Project.xml 2>/dev/null
+          else
+            echo "ERROR: no encuentro Project.hxp, project.xml ni Project.xml en la raiz del repo"
             exit 1
           fi
           test -f hmm.json && echo "hmm.json encontrado" || echo "AVISO: no hay hmm.json"
