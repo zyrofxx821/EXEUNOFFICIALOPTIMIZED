@@ -5,6 +5,9 @@ on:
 
 env:
   HAXELIB_PATH: ${{ github.workspace }}/.haxelib
+  HOMEBREW_NO_AUTO_UPDATE: 1
+  HOMEBREW_NO_INSTALL_CLEANUP: 1
+  HOMEBREW_NO_ENV_HINTS: 1
 
 jobs:
   build:
@@ -155,7 +158,42 @@ jobs:
           LOGDIR="$HOME/logs"
           mkdir -p "$LOGDIR"
           echo "Lime dir: $LIME_DIR"
-          for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
+
+          link_brew_libs() {
+            [ -z "$BREW_PREFIX" ] && return 0
+            sudo mkdir -p /opt/local/lib /opt/local/include
+            for f in "$BREW_PREFIX"/lib/*.dylib "$BREW_PREFIX"/lib/*.a; do
+              [ -e "$f" ] && sudo ln -sf "$f" /opt/local/lib/
+            done
+            for f in "$BREW_PREFIX"/include/*; do
+              [ -e "$f" ] && sudo ln -sfn "$f" /opt/local/include/
+            done
+          }
+
+          brew_formulas_for() {
+            case "$1" in
+              jxl|jxl_threads|jxl_cms) echo "jpeg-xl" ;;
+              avif) echo "libavif" ;;
+              heif) echo "libheif" ;;
+              webp|webpdemux|webpmux|sharpyuv) echo "webp" ;;
+              yuv) echo "libyuv" ;;
+              tiff) echo "libtiff" ;;
+              png|png16) echo "libpng" ;;
+              jpeg) echo "jpeg-turbo" ;;
+              gif) echo "giflib" ;;
+              z) echo "zlib" ;;
+              lzma) echo "xz" ;;
+              hwy) echo "highway" ;;
+              lcms2) echo "little-cms2" ;;
+              SDL2*) echo "sdl2" ;;
+              openal) echo "openal-soft" ;;
+              mpg123) echo "mpg123" ;;
+              modplug) echo "libmodplug" ;;
+              *) echo "lib$1 $1" ;;
+            esac
+          }
+
+          for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
             LOG="$LOGDIR/rebuild-$1-$2-$i.log"
             : > "$LOG"
             echo "=== Intento $i: lime rebuild $@ ==="
@@ -185,7 +223,22 @@ jobs:
               echo "Rebuild terminado bien"
               exit 0
             fi
+
             MISSING=$(grep -A1 "no such file or directory" "$LOG" | grep -oE "(\./)?lib/[A-Za-z0-9_./+-]+\.(c|cc|cpp|mm|m)" | sed 's#^\./##' | sort -u)
+            LIBMISS=$(grep -oE "library '[A-Za-z0-9_+.-]+' not found" "$LOG" | sed -E "s/library '(.*)' not found/\1/" | sort -u)
+
+            if [ -z "$MISSING" ] && [ -n "$LIBMISS" ] && [ -n "$BREW_CMD" ]; then
+              echo ">>> Faltan librerias del sistema: $LIBMISS"
+              for L in $LIBMISS; do
+                for FORMULA in $(brew_formulas_for "$L"); do
+                  echo "Instalando con brew: $FORMULA"
+                  $BREW_CMD install "$FORMULA" > /dev/null 2>&1 && break
+                done
+              done
+              link_brew_libs
+              continue
+            fi
+
             if [ -z "$MISSING" ]; then
               echo "El error NO es un archivo faltante. Se detiene."
               exit 1
@@ -217,8 +270,8 @@ jobs:
           haxelib run lime rebuild hxcpp
           bash $HOME/rebuild_lime.sh android -arm64
 
-      - name: Install libjxl for macOS link
-        timeout-minutes: 30
+      - name: Install all system libraries for macOS link
+        timeout-minutes: 60
         run: |
           echo "uname -m: $(uname -m)"
           echo "neko: $(which neko)"
@@ -228,29 +281,37 @@ jobs:
           if echo "$NEKO_INFO" | grep -q "arm64"; then
             MACARCH="-arm64"
             BREW_PREFIX=/opt/homebrew
-            brew install jpeg-xl
+            BREW_CMD="brew"
           else
             MACARCH="-64"
             BREW_PREFIX=/usr/local
+            BREW_CMD="arch -x86_64 /usr/local/bin/brew"
             softwareupdate --install-rosetta --agree-to-license || true
             if [ ! -x /usr/local/bin/brew ]; then
               arch -x86_64 /bin/bash -c "NONINTERACTIVE=1 $(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
             fi
-            arch -x86_64 /usr/local/bin/brew install jpeg-xl
           fi
 
           echo "MACARCH=$MACARCH" >> $GITHUB_ENV
           echo "BREW_PREFIX=$BREW_PREFIX" >> $GITHUB_ENV
+          echo "BREW_CMD=$BREW_CMD" >> $GITHUB_ENV
 
-          echo "Librerias jxl instaladas:"
-          ls -la $BREW_PREFIX/lib | grep -E "jxl|brotli|hwy|lcms" || true
+          FORMULAS="pkgconf cmake nasm ninja jpeg-xl libavif webp libheif aom dav1d svt-av1 rav1e libyuv libpng jpeg-turbo libtiff giflib freetype harfbuzz fontconfig brotli highway little-cms2 zlib xz zstd lz4 bzip2 libogg libvorbis opus opusfile flac libmodplug mpg123 libsndfile theora libvpx openal-soft sdl2 libx11 libxext"
+
+          for FORMULA in $FORMULAS; do
+            echo "--- brew install $FORMULA"
+            $BREW_CMD install $FORMULA 2>&1 | tail -2 || echo "AVISO: no se pudo instalar $FORMULA"
+          done
 
           sudo mkdir -p /opt/local/lib /opt/local/include
-          for f in $BREW_PREFIX/lib/libjxl* $BREW_PREFIX/lib/libbrotli* $BREW_PREFIX/lib/libhwy* $BREW_PREFIX/lib/liblcms2*; do
+          for f in $BREW_PREFIX/lib/*.dylib $BREW_PREFIX/lib/*.a; do
             [ -e "$f" ] && sudo ln -sf "$f" /opt/local/lib/
           done
-          [ -d "$BREW_PREFIX/include/jxl" ] && sudo ln -sfn "$BREW_PREFIX/include/jxl" /opt/local/include/jxl
-          ls -la /opt/local/lib
+          for f in $BREW_PREFIX/include/*; do
+            [ -e "$f" ] && sudo ln -sfn "$f" /opt/local/include/
+          done
+          echo "Algunas librerias enlazadas en /opt/local/lib:"
+          ls /opt/local/lib | grep -E "jxl|avif|webp|heif|png|jpeg|tiff|freetype|ogg|vorbis|openal" | head -40 || true
 
       - name: Rebuild Lime tools for macOS
         timeout-minutes: 90
@@ -258,6 +319,7 @@ jobs:
           mkdir -p $LIME_DIR/ndll
           export LIBRARY_PATH="$BREW_PREFIX/lib:/opt/local/lib:$LIBRARY_PATH"
           export CPATH="$BREW_PREFIX/include:/opt/local/include:$CPATH"
+          export PKG_CONFIG_PATH="$BREW_PREFIX/lib/pkgconfig:$BREW_PREFIX/share/pkgconfig:$PKG_CONFIG_PATH"
           echo "Arquitectura a compilar: $MACARCH"
 
           bash $HOME/rebuild_lime.sh mac $MACARCH || echo "AVISO: fallo rebuild mac $MACARCH"
