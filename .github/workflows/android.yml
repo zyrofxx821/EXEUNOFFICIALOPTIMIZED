@@ -8,7 +8,7 @@ env:
   HOMEBREW_NO_AUTO_UPDATE: 1
   HOMEBREW_NO_INSTALL_CLEANUP: 1
   HOMEBREW_NO_ENV_HINTS: 1
-  GRADLE_OPTS: -Xmx3g -Dorg.gradle.daemon=false -Dorg.gradle.internal.http.connectionTimeout=180000 -Dorg.gradle.internal.http.socketTimeout=180000
+  GRADLE_OPTS: -Xmx4g -Dorg.gradle.daemon=false -Dorg.gradle.internal.http.connectionTimeout=180000 -Dorg.gradle.internal.http.socketTimeout=180000
 
 jobs:
   build:
@@ -65,10 +65,20 @@ jobs:
           echo "sdkmanager: $SDKM"
           if [ -n "$SDKM" ]; then
             yes | $SDKM --licenses > /dev/null 2>&1
-            $SDKM "platform-tools" "platforms;android-29" "platforms;android-30" "platforms;android-31" "platforms;android-32" "platforms;android-33" "platforms;android-34" "platforms;android-35" "build-tools;33.0.2" "build-tools;34.0.0" "build-tools;35.0.0" "cmake;3.22.1" 2>&1 | tail -15
-            $SDKM --list_installed 2>&1 | tail -30
+            $SDKM "platform-tools" "platforms;android-29" "platforms;android-30" "platforms;android-31" "platforms;android-32" "platforms;android-33" "platforms;android-34" "platforms;android-35" "platforms;android-36" "build-tools;33.0.2" "build-tools;34.0.0" "build-tools;35.0.0" "build-tools;36.0.0" "cmake;3.22.1" 2>&1 | tail -20
+            $SDKM --list_installed 2>&1 | tail -35
           fi
           exit 0
+
+      - name: Restore Gradle cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ runner.os }}-${{ github.run_id }}
+          restore-keys: |
+            gradle-${{ runner.os }}-
 
       - name: Restore haxelib cache
         id: haxelib-cache
@@ -168,6 +178,33 @@ jobs:
             echo "Parcheando $f"
             sed -i '' '/define fdopen(fd,mode) NULL/d' "$f"
           done
+
+      - name: Create SDL HDR patch script
+        run: |
+          mkdir -p $HOME/logs
+          cat > $HOME/patch_sdl.sh << 'EOF'
+          #!/bin/bash
+          # Quita las llamadas de HDR de Android 16 (API 36) de SDLSurface.java
+          # para que compile aunque el SDK de Android no las tenga.
+          for F in "$@"; do
+            [ -f "$F" ] || continue
+            if grep -q -E "HdrSdrRatio|setDesiredHdrHeadroom" "$F"; then
+              echo "Parcheando HDR en: $F"
+              perl -0pi -e '
+                s/\b[A-Za-z_]\w*\.isHdrSdrRatioAvailable\(\)/false/g;
+                s/\b[A-Za-z_]\w*\.getHdrSdrRatio\(\)/1.0f/g;
+                s/\b[A-Za-z_]\w*\.getHighestHdrSdrRatio\(\)/1.0f/g;
+                s/\b[A-Za-z_]\w*\.registerHdrSdrRatioChangedListener\([^;]*\);//g;
+                s/\b[A-Za-z_]\w*\.unregisterHdrSdrRatioChangedListener\([^;]*\);//g;
+                s/(?<![\w.])setDesiredHdrHeadroom\([^;()]*\);//g;
+              ' "$F"
+              echo "  Lineas HDR que quedan (deberian ser solo variables):"
+              grep -n -E "HdrSdrRatio|setDesiredHdrHeadroom" "$F" || echo "  ninguna"
+            fi
+          done
+          exit 0
+          EOF
+          chmod +x $HOME/patch_sdl.sh
 
       - name: Create rebuild helper script
         run: |
@@ -362,7 +399,25 @@ jobs:
           file $LIME_DIR/ndll/Mac*/lime.ndll || true
           haxelib run lime help 2>&1 | head -20 || true
 
+      - name: Restore export cache
+        uses: actions/cache/restore@v4
+        with:
+          path: export
+          key: export-${{ runner.os }}-${{ github.run_id }}
+          restore-keys: |
+            export-${{ runner.os }}-
+
+      - name: Patch SDL Java for Android 16 HDR APIs
+        run: |
+          echo "SDLSurface.java encontrados:"
+          find "$LIME_DIR/templates" "$LIME_DIR/project" "$GITHUB_WORKSPACE" -name SDLSurface.java -not -path "*/.git/*" 2>/dev/null
+          find "$LIME_DIR/templates" "$LIME_DIR/project" "$GITHUB_WORKSPACE" -name SDLSurface.java -not -path "*/.git/*" 2>/dev/null | while read -r F; do
+            bash $HOME/patch_sdl.sh "$F"
+          done
+
       - name: Build APK
+        id: build
+        continue-on-error: true
         timeout-minutes: 200
         shell: bash {0}
         run: |
@@ -380,13 +435,117 @@ jobs:
               exit 0
             fi
             echo "Fallo el intento $ATTEMPT (codigo $STATUS)"
+            find export -name SDLSurface.java 2>/dev/null | while read -r F; do bash $HOME/patch_sdl.sh "$F"; done
           done
 
-          echo "=============================================="
-          echo "ULTIMAS LINEAS DE ERROR DEL BUILD"
-          echo "=============================================="
-          grep -n -E "error:|Error:|FAILED|Exception|not found|No such file|undefined|What went wrong" $HOME/logs/build.log | tail -60
+          echo "El build fallo. Se intentara el arreglo automatico de Java."
           exit 1
+
+      - name: Auto-fix Java sources and retry Gradle
+        id: fix
+        if: steps.build.outcome == 'failure'
+        continue-on-error: true
+        timeout-minutes: 60
+        shell: bash {0}
+        run: |
+          mkdir -p $HOME/logs
+          : > $HOME/logs/gradle-retry.log
+
+          BIN=$(find export -type d -path "*/android/bin" 2>/dev/null | head -1)
+          echo "Proyecto Android generado: $BIN"
+          if [ -z "$BIN" ]; then
+            echo "No existe el proyecto Android generado, no hay nada que arreglar"
+            exit 1
+          fi
+
+          find "$BIN" -name SDLSurface.java 2>/dev/null | while read -r F; do bash $HOME/patch_sdl.sh "$F"; done
+
+          echo "sdk.dir=$ANDROID_HOME" > "$BIN/local.properties"
+
+          touch "$BIN/gradle.properties"
+          for L in "android.useAndroidX=true" "android.enableJetifier=true" "android.nonTransitiveRClass=false" "org.gradle.jvmargs=-Xmx4g -Dfile.encoding=UTF-8" "org.gradle.workers.max=4"; do
+            KEY=${L%%=*}
+            grep -q "^$KEY=" "$BIN/gradle.properties" || echo "$L" >> "$BIN/gradle.properties"
+          done
+
+          cd "$BIN"
+          chmod +x gradlew 2>/dev/null
+          GR="./gradlew"
+          [ -x ./gradlew ] || GR="gradle"
+
+          for ROUND in 1 2; do
+            if [ "$ROUND" = "1" ]; then
+              echo "=== Ronda 1: compileSdk minimo 34 ==="
+              for G in $(find "$BIN" -name build.gradle -not -path "*/build/*" 2>/dev/null); do
+                perl -0pi -e 's/(compileSdk(?:Version)?\s*=?\s*)(\d+)/$1 . ($2 < 34 ? 34 : $2)/e' "$G"
+                grep -n -E "compileSdk" "$G" || true
+              done
+            else
+              echo "=== Ronda 2: compileSdk 36 (API de Android 16) ==="
+              for G in $(find "$BIN" -name build.gradle -not -path "*/build/*" 2>/dev/null); do
+                perl -0pi -e 's/(compileSdk(?:Version)?\s*=?\s*)\d+/${1}36/g' "$G"
+                grep -n -E "compileSdk" "$G" || true
+              done
+              grep -q "^android.suppressUnsupportedCompileSdk" gradle.properties || echo "android.suppressUnsupportedCompileSdk=36" >> gradle.properties
+            fi
+
+            for TASK in assembleDebug assembleRelease; do
+              echo "=== $GR $TASK (ronda $ROUND) ==="
+              $GR --no-daemon $TASK 2>&1 | tee -a $HOME/logs/gradle-retry.log
+              if [ "${PIPESTATUS[0]}" = "0" ]; then
+                echo "Gradle OK con $TASK"
+                exit 0
+              fi
+            done
+          done
+          exit 1
+
+      - name: Diagnose Build APK failure
+        if: steps.fix.outcome == 'failure'
+        continue-on-error: true
+        shell: bash {0}
+        run: |
+          LOGS="$HOME/logs/build.log $HOME/logs/gradle-retry.log"
+          echo "Lineas totales: $(cat $LOGS 2>/dev/null | wc -l)"
+
+          echo
+          echo "=============== 1) ERRORES CON EL SIMBOLO QUE FALTA (sin repetir) ==============="
+          cat $LOGS 2>/dev/null | grep -A4 "error: cannot find symbol" | grep -v '^--$' | sed -E 's#/Users/runner/work/[^/]+/[^/]+/##' | awk '!s[$0]++' | head -60
+
+          echo
+          echo "=============== 2) OTROS ERRORES (no son cannot find symbol) ==============="
+          cat $LOGS 2>/dev/null | grep "error:" | grep -v "cannot find symbol" | sed -E 's#/Users/runner/work/[^/]+/[^/]+/##' | awk '!s[$0]++' | head -20
+
+          echo
+          echo "=============== 3) WHAT WENT WRONG DE GRADLE ==============="
+          cat $HOME/logs/gradle-retry.log 2>/dev/null | grep -A6 "What went wrong" | head -40
+
+          echo
+          echo "=============== 4) LLAMADAS A APIs 35 Y 36 EN EL JAVA GENERADO ==============="
+          grep -rn -E "SDK_INT >= 3[5-9]|VERSION_CODES\.(VANILLA_ICE_CREAM|BAKLAVA)|HdrSdrRatio|HdrHeadroom" export --include=*.java 2>/dev/null | sed -E 's#^export/[^:]*/java/##' | head -30
+
+          echo
+          echo "=============== 5) CONFIG DE GRADLE ==============="
+          for G in $(find export -name "build.gradle" -o -name "gradle-wrapper.properties" -o -name "gradle.properties" 2>/dev/null | head -8); do
+            echo "--- $G"
+            grep -n -E "compileSdk|targetSdk|minSdk|buildToolsVersion|com.android.tools.build|distributionUrl|namespace|suppressUnsupported" "$G"
+          done
+
+      - name: Save export cache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: export
+          key: export-${{ runner.os }}-${{ github.run_id }}
+
+      - name: Save Gradle cache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ runner.os }}-${{ github.run_id }}
 
       - name: Sign APK if unsigned
         continue-on-error: true
@@ -413,7 +572,9 @@ jobs:
 
       - name: List output
         if: always()
-        run: find export -name "*.apk" 2>/dev/null || echo "No hay APK"
+        run: |
+          find export -name "*.apk" 2>/dev/null || echo "No hay APK"
+          df -h / || true
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
@@ -429,6 +590,14 @@ jobs:
           path: export/mobile-contents
           if-no-files-found: warn
 
+      - name: Upload generated Java sources
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: java-sources
+          path: export/**/android/bin/app/src/main/java
+          if-no-files-found: ignore
+
       - name: Upload logs
         if: always()
         uses: actions/upload-artifact@v4
@@ -436,3 +605,13 @@ jobs:
           name: logs
           path: ~/logs
           if-no-files-found: ignore
+
+      - name: Verify APK exists
+        if: always()
+        run: |
+          APKS=$(find export -name "*.apk" 2>/dev/null)
+          if [ -z "$APKS" ]; then
+            echo "ERROR: no se genero ningun APK"
+            exit 1
+          fi
+          ls -la $APKS
