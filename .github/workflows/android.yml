@@ -8,6 +8,7 @@ env:
   HOMEBREW_NO_AUTO_UPDATE: 1
   HOMEBREW_NO_INSTALL_CLEANUP: 1
   HOMEBREW_NO_ENV_HINTS: 1
+  GRADLE_OPTS: -Xmx3g -Dorg.gradle.daemon=false -Dorg.gradle.internal.http.connectionTimeout=180000 -Dorg.gradle.internal.http.socketTimeout=180000
 
 jobs:
   build:
@@ -15,6 +16,21 @@ jobs:
     timeout-minutes: 340
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          lfs: true
+
+      - name: Project sanity check
+        run: |
+          echo "Archivos en la raiz del repo:"
+          ls -la
+          if [ ! -f project.xml ] && [ ! -f Project.xml ]; then
+            echo "ERROR: no encuentro project.xml ni Project.xml en la raiz del repo"
+            exit 1
+          fi
+          test -f hmm.json && echo "hmm.json encontrado" || echo "AVISO: no hay hmm.json"
+          df -h /
+          sysctl -n hw.ncpu hw.memsize
 
       - uses: krdlab/setup-haxe@v2
         with:
@@ -47,7 +63,8 @@ jobs:
           echo "sdkmanager: $SDKM"
           if [ -n "$SDKM" ]; then
             yes | $SDKM --licenses > /dev/null 2>&1
-            $SDKM "platforms;android-33" "platforms;android-34" "build-tools;34.0.0" 2>&1 | tail -5
+            $SDKM "platform-tools" "platforms;android-29" "platforms;android-30" "platforms;android-31" "platforms;android-32" "platforms;android-33" "platforms;android-34" "platforms;android-35" "build-tools;33.0.2" "build-tools;34.0.0" "build-tools;35.0.0" "cmake;3.22.1" 2>&1 | tail -15
+            $SDKM --list_installed 2>&1 | tail -30
           fi
           exit 0
 
@@ -341,15 +358,56 @@ jobs:
           ls -la $LIME_DIR/ndll
           find $LIME_DIR/ndll -type f
           file $LIME_DIR/ndll/Mac*/lime.ndll || true
-          haxelib run lime version
+          haxelib run lime help 2>&1 | head -20 || true
 
       - name: Build APK
         timeout-minutes: 200
         shell: bash {0}
         run: |
           mkdir -p $HOME/logs
-          haxelib run lime build android -final 2>&1 | tee $HOME/logs/build.log
-          exit ${PIPESTATUS[0]}
+          export HXCPP_COMPILE_THREADS=$(sysctl -n hw.ncpu)
+          echo "Hilos de compilacion: $HXCPP_COMPILE_THREADS"
+          : > $HOME/logs/build.log
+
+          for ATTEMPT in 1 2; do
+            echo "=== Build APK intento $ATTEMPT ==="
+            haxelib run lime build android -final 2>&1 | tee -a $HOME/logs/build.log
+            STATUS=${PIPESTATUS[0]}
+            if [ "$STATUS" = "0" ]; then
+              echo "Build APK terminado bien"
+              exit 0
+            fi
+            echo "Fallo el intento $ATTEMPT (codigo $STATUS)"
+          done
+
+          echo "=============================================="
+          echo "ULTIMAS LINEAS DE ERROR DEL BUILD"
+          echo "=============================================="
+          grep -n -E "error:|Error:|FAILED|Exception|not found|No such file|undefined|What went wrong" $HOME/logs/build.log | tail -60
+          exit 1
+
+      - name: Sign APK if unsigned
+        continue-on-error: true
+        run: |
+          APKS=$(find export -name "*.apk" 2>/dev/null)
+          if [ -z "$APKS" ]; then
+            echo "No hay APK para firmar"
+            exit 0
+          fi
+          BT=$(ls -d $ANDROID_HOME/build-tools/* | sort | tail -1)
+          echo "build-tools: $BT"
+          KS=$HOME/debug.keystore
+          keytool -genkeypair -keystore $KS -storepass android -keypass android -alias androiddebugkey -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
+          for A in $APKS; do
+            if $BT/apksigner verify "$A" > /dev/null 2>&1; then
+              echo "Ya esta firmado: $A"
+            else
+              echo "Firmando: $A"
+              $BT/zipalign -f -p 4 "$A" "$A.aligned" && mv "$A.aligned" "$A"
+              $BT/apksigner sign --ks $KS --ks-pass pass:android --key-pass pass:android --ks-key-alias androiddebugkey "$A"
+              $BT/apksigner verify "$A" && echo "Firmado OK: $A"
+            fi
+          done
 
       - name: List output
         if: always()
